@@ -2,6 +2,7 @@ import pyphen
 
 dic = pyphen.Pyphen(lang='en')
 
+
 def syllabify_text(text):
     words = text.split()
     result = []
