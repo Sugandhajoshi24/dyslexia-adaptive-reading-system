@@ -3,19 +3,31 @@ import time
 import re
 
 from modules.document_processing.extract_text import extract_pdf_text
-from modules.text_processing.syllable_splitter import syllabify_text
+from modules.text_processing.syllable_splitter import syllabify_difficult_words
 from modules.text_processing.sentence_splitter import split_into_lines
+from modules.text_processing.text_cleaner import clean_text
+from modules.text_processing.difficulty_detector import detect_difficult_words, highlight_difficult_words
 from modules.reader.theme_manager import get_theme
 from modules.audio.tts_engine import generate_audio
-from modules.text_processing.text_cleaner import clean_text
 from modules.export.pdf_exporter import generate_accessible_pdf
-from modules.text_processing.difficulty_detector import detect_difficult_words, highlight_difficult_words
 
 
-# ---------- Session State ----------
+# ---------------- PAGE CONFIG ----------------
+
+st.set_page_config(
+    page_title="Dyslexia Adaptive Reader",
+    page_icon="📖",
+    layout="wide"
+)
+
+
+# ---------------- SESSION STATE ----------------
 
 if "audio_file" not in st.session_state:
     st.session_state.audio_file = None
+
+if "audio_initialized" not in st.session_state:
+    st.session_state.audio_initialized = False
 
 if "focus_line" not in st.session_state:
     st.session_state.focus_line = 0
@@ -27,37 +39,40 @@ if "last_move_time" not in st.session_state:
     st.session_state.last_move_time = time.time()
 
 
-# ---------- UI ----------
+# ---------------- HEADER ----------------
 
 st.title("Dyslexia-Friendly Adaptive Reading System")
 
 st.write(
 """
-This system helps readers with dyslexia by providing customizable reading tools such as
-syllable splitting, visual adjustments, focus mode, and text-to-speech support.
-Upload a document to begin reading.
+Assistive reading interface with syllable support, customizable layouts,
+focus mode navigation, and text-to-speech narration.
 """
 )
 
-uploaded_file = st.file_uploader("Upload Document as PDF or TXT", type=["pdf", "txt"])
 
-st.info("Upload a PDF or TXT document to start using the reading tools.")
+# ---------------- FILE UPLOAD ----------------
+
+uploaded_file = st.file_uploader(
+    "Upload PDF or TXT Document",
+    type=["pdf", "txt"]
+)
+
+st.info("Upload a document to begin reading.")
 
 
-# ---------- Main Logic ----------
+# ---------------- MAIN PIPELINE ----------------
 
 if uploaded_file is not None:
 
-    # ---------- Sidebar Controls ----------
+    # -------- SIDEBAR --------
 
-    st.sidebar.header("Reading Controls")
+    st.sidebar.title("Reader Controls")
 
     font_family = st.sidebar.selectbox(
-        "Reading Font",
+        "Font",
         ["Arial", "Verdana", "Georgia", "Times New Roman"]
     )
-
-    use_syllables = st.sidebar.checkbox("Enable Syllable Splitting")
 
     font_size = st.sidebar.slider("Font Size", 14, 40, 20)
 
@@ -70,170 +85,119 @@ if uploaded_file is not None:
         ["Default", "Sepia", "Dark", "High Contrast"]
     )
 
-    focus_mode = st.sidebar.checkbox("Enable Focus Mode")
+    use_syllables = st.sidebar.checkbox("Enable Syllable Splitting")
 
     highlight_difficulty = st.sidebar.checkbox("Highlight Difficult Words")
 
+    focus_mode = st.sidebar.checkbox("Enable Focus Mode")
 
-    # ---------- Reading Controls ----------
+    start_reading = st.sidebar.button("Start Reading")
 
-    st.sidebar.header("Reading")
+    pause_reading = st.sidebar.button("Pause")
 
-    start_reading = st.sidebar.button("▶ Start Reading")
-    pause_reading = st.sidebar.button("⏸ Pause")
+    export_pdf = st.sidebar.button("Download Dyslexia-Friendly PDF")
+
+
+    # -------- TEXT EXTRACTION --------
+
+    if uploaded_file.type == "application/pdf":
+        original_text = extract_pdf_text(uploaded_file)
+    else:
+        original_text = uploaded_file.read().decode("utf-8")
+
+    original_text = clean_text(original_text)
+
+
+    # -------- DIFFICULT WORD DETECTION --------
+
+    difficult_words = set()
+
+    if use_syllables or highlight_difficulty:
+        difficult_words = detect_difficult_words(original_text)
+
+
+    # -------- READER TEXT PIPELINE --------
+
+    reader_text = original_text
+
+    if use_syllables:
+        reader_text = syllabify_difficult_words(reader_text, difficult_words)
+
+    if highlight_difficulty:
+        reader_text = highlight_difficult_words(reader_text, difficult_words)
+
+
+    # -------- THEME --------
+
+    background, text_color = get_theme(theme)
+
+
+    # -------- AUDIO GENERATION --------
 
     if start_reading:
+
         st.session_state.auto_reading = True
-        st.session_state.last_move_time = time.time()
+
+        if not st.session_state.audio_initialized:
+
+            with st.spinner("Generating audio..."):
+
+                tts_text = re.sub(r'<[^>]+>', '', reader_text)
+                tts_text = tts_text.replace("-", "")
+
+                st.session_state.audio_file = generate_audio(tts_text)
+                st.session_state.audio_initialized = True
 
     if pause_reading:
         st.session_state.auto_reading = False
 
 
-    # ---------- Text Extraction ----------
+    # ---------------- DISPLAY ----------------
 
-    if uploaded_file.type == "application/pdf":
-        text = extract_pdf_text(uploaded_file)
-    else:
-        text = uploaded_file.read().decode("utf-8")
-
-    text = clean_text(text)
-
-    # Keep original text for difficulty detection
-    original_text = text
-
-
-    # ---------- Detect Difficult Words ----------
-
-    difficult_words = set()
-
-    if highlight_difficulty:
-        difficult_words = detect_difficult_words(original_text)
-
-
-    # ---------- Apply Syllable Splitting ----------
-
-    if use_syllables:
-        text = syllabify_text(text)
-
-
-    # ---------- Highlight Difficult Words ----------
-
-    if highlight_difficulty:
-        text = highlight_difficult_words(text, difficult_words)
-
-
-    # ---------- Theme ----------
-
-    background, text_color = get_theme(theme)
-
-
-    # ---------- Audio ----------
-
-    if start_reading:
-        with st.spinner("Generating audio..."):
-
-            # Remove HTML tags
-            audio_text = re.sub(r'<[^>]+>', '', text)
-
-            # Remove syllable hyphens
-            audio_text = audio_text.replace("-", "")
-
-            st.session_state.audio_file = generate_audio(audio_text)
-
-
-    if st.session_state.audio_file:
-
-        st.audio(st.session_state.audio_file)
-
-        with open(st.session_state.audio_file, "rb") as file:
-            st.download_button(
-                label="Download Audio",
-                data=file,
-                file_name="reading_audio.mp3",
-                mime="audio/mp3"
-            )
-
-
-    # ---------- Export ----------
-
-    st.sidebar.header("Export Options")
-
-    if st.sidebar.button("Download Dyslexia-Friendly PDF"):
-
-        with st.spinner("Generating accessible PDF..."):
-            pdf_file = generate_accessible_pdf(
-                text,
-                font_size=font_size,
-                line_spacing=line_spacing
-            )
-
-        with open(pdf_file, "rb") as file:
-            st.download_button(
-                label="Download Accessible PDF",
-                data=file,
-                file_name="dyslexia_reader.pdf",
-                mime="application/pdf"
-            )
-
-
-    # ---------- Display Section ----------
-
-    st.subheader("Extracted Text")
+    st.subheader("Reading Panel")
     st.divider()
 
-    styled_text = f"""
-    <div style="
-    background-color:{background};
-    color:{text_color};
-    font-family:{font_family};
-    font-size:{font_size}px;
-    line-height:{line_spacing};
-    letter-spacing:{letter_spacing}px;
-    padding:20px;
-    border-radius:10px;
-    max-width:800px;
-    margin:auto;
-    ">
-    {text}
-    </div>
-    """
 
-
-    # ---------- Focus Mode ----------
+    # -------- FOCUS MODE --------
 
     if focus_mode:
 
-        lines = split_into_lines(text)
+        clean_focus_text = re.sub(r'<[^>]+>', '', reader_text)
+
+        lines = split_into_lines(clean_focus_text)
+
         total_lines = len(lines)
 
         if st.session_state.focus_line >= total_lines:
             st.session_state.focus_line = 0
 
-
         col1, col2 = st.columns(2)
 
-        if col1.button("⬅ Previous Sentence"):
+        if col1.button("Previous Sentence"):
             if st.session_state.focus_line > 0:
                 st.session_state.focus_line -= 1
 
-        if col2.button("Next Sentence ➡"):
+        if col2.button("Next Sentence"):
             if st.session_state.focus_line < total_lines - 1:
                 st.session_state.focus_line += 1
 
+
+        # -------- AUTO READING --------
 
         if st.session_state.auto_reading:
 
             current_time = time.time()
 
-            if current_time - st.session_state.last_move_time > 5:
+            if current_time - st.session_state.last_move_time > 4:
 
                 if st.session_state.focus_line < total_lines - 1:
+
                     st.session_state.focus_line += 1
                     st.session_state.last_move_time = current_time
                     st.rerun()
 
                 else:
+
                     st.session_state.auto_reading = False
 
 
@@ -242,31 +206,26 @@ if uploaded_file is not None:
         progress = (current_line + 1) / total_lines
 
         st.progress(progress)
-        st.write(f"Reading Progress: {int(progress * 100)}%")
-
+        st.caption(f"Reading progress: {int(progress * 100)}%")
 
         start = max(0, current_line - 2)
         end = min(total_lines, current_line + 3)
 
         for i in range(start, end):
 
-            line = lines[i]
-
             if i == current_line:
 
                 st.markdown(
                     f"""
                     <div style="
-                    background-color: rgba(255,214,102,0.6);
-                    color:{text_color};
-                    font-family:{font_family};
-                    font-size:{font_size}px;
-                    padding:12px;
-                    border-radius:8px;
-                    border-left:6px solid orange;
-                    margin-bottom:10px;
+                        background-color:rgba(255,214,102,0.6);
+                        padding:12px;
+                        border-radius:8px;
+                        margin-bottom:10px;
+                        font-size:{font_size}px;
+                        font-family:{font_family};
                     ">
-                    {line}
+                    {lines[i]}
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -277,15 +236,12 @@ if uploaded_file is not None:
                 st.markdown(
                     f"""
                     <div style="
-                    background-color:{background};
-                    color:{text_color};
-                    opacity:0.35;
-                    font-family:{font_family};
-                    font-size:{font_size}px;
-                    padding:10px;
-                    margin-bottom:10px;
+                        opacity:0.35;
+                        margin-bottom:10px;
+                        font-size:{font_size}px;
+                        font-family:{font_family};
                     ">
-                    {line}
+                    {lines[i]}
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -293,4 +249,74 @@ if uploaded_file is not None:
 
     else:
 
+        formatted_text = reader_text.replace(
+            "\n\n", '</div><div style="margin-bottom:1.2em;">'
+        )
+
+        styled_text = f"""
+        <div style="
+            background-color:{background};
+            color:{text_color};
+            font-family:{font_family};
+            font-size:{font_size}px;
+            line-height:{line_spacing + 0.4};
+            letter-spacing:{letter_spacing}px;
+            word-spacing:0.08em;
+            padding:50px;
+            border-radius:14px;
+            max-width:750px;
+            margin:40px auto;
+            text-align:left;
+        ">
+
+        <div style="margin-bottom:1.2em;">
+        {formatted_text}
+        </div>
+
+        </div>
+        """
+
         st.markdown(styled_text, unsafe_allow_html=True)
+
+
+    # -------- AUDIO --------
+
+    if st.session_state.audio_file:
+
+        st.divider()
+        st.subheader("Audio Narration")
+
+        st.audio(st.session_state.audio_file)
+
+        with open(st.session_state.audio_file, "rb") as f:
+
+            st.download_button(
+                "Download Audio",
+                f,
+                file_name="reading_audio.mp3",
+                mime="audio/mp3"
+            )
+
+
+    # -------- PDF EXPORT --------
+
+    if export_pdf:
+
+        with st.spinner("Generating PDF..."):
+
+            pdf_text = re.sub(r'<[^>]+>', '', reader_text)
+
+            pdf_file = generate_accessible_pdf(
+                pdf_text,
+                font_size=font_size,
+                line_spacing=line_spacing
+            )
+
+        with open(pdf_file, "rb") as f:
+
+            st.download_button(
+                "Download Accessible PDF",
+                f,
+                file_name="dyslexia_reader.pdf",
+                mime="application/pdf"
+            )

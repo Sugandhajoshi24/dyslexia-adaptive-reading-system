@@ -1,14 +1,25 @@
 import pyphen
+import re
 
-dic = pyphen.Pyphen(lang='en')
+dic = pyphen.Pyphen(lang="en")
 
 
-def syllabify_text(text):
+def syllabify_difficult_words(text, difficult_words):
+
     words = text.split()
-    result = []
+    processed_words = []
 
     for word in words:
-        syllable_word = dic.inserted(word)
-        result.append(syllable_word)
 
-    return " ".join(result)
+        clean_word = re.sub(r'[^\w\-]', '', word)
+        root = clean_word.lower()
+
+        if root in difficult_words:
+
+            syllables = dic.inserted(clean_word)
+
+            word = word.replace(clean_word, syllables)
+
+        processed_words.append(word)
+
+    return " ".join(processed_words)
