@@ -1,16 +1,17 @@
-from gtts import gTTS
 import os
 import time
-
+from gtts import gTTS
 
 def generate_audio(text):
 
-    os.makedirs("downloads", exist_ok=True)
+    folder = "downloads"
 
-    filename = f"downloads/audio_{int(time.time())}.mp3"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
 
-    tts = gTTS(text=text, lang="en")
+    filename = f"{folder}/audio_{int(time.time())}.mp3"
 
+    tts = gTTS(text)
     tts.save(filename)
 
     return filename

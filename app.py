@@ -1,6 +1,7 @@
 import streamlit as st
 import time
 import re
+import os
 
 from modules.document_processing.extract_text import extract_pdf_text
 from modules.text_processing.syllable_splitter import syllabify_difficult_words
@@ -20,23 +21,16 @@ st.set_page_config(
     layout="wide"
 )
 
-
 # ---------------- SESSION STATE ----------------
-
-if "audio_file" not in st.session_state:
-    st.session_state.audio_file = None
-
-if "audio_initialized" not in st.session_state:
-    st.session_state.audio_initialized = False
 
 if "focus_line" not in st.session_state:
     st.session_state.focus_line = 0
 
-if "auto_reading" not in st.session_state:
-    st.session_state.auto_reading = False
+if "sentence_audio" not in st.session_state:
+    st.session_state.sentence_audio = {}
 
-if "last_move_time" not in st.session_state:
-    st.session_state.last_move_time = time.time()
+if "full_audio" not in st.session_state:
+    st.session_state.full_audio = None
 
 
 # ---------------- HEADER ----------------
@@ -50,7 +44,6 @@ focus mode navigation, and text-to-speech narration.
 """
 )
 
-
 # ---------------- FILE UPLOAD ----------------
 
 uploaded_file = st.file_uploader(
@@ -59,7 +52,6 @@ uploaded_file = st.file_uploader(
 )
 
 st.info("Upload a document to begin reading.")
-
 
 # ---------------- MAIN PIPELINE ----------------
 
@@ -91,12 +83,9 @@ if uploaded_file is not None:
 
     focus_mode = st.sidebar.checkbox("Enable Focus Mode")
 
-    start_reading = st.sidebar.button("Start Reading")
-
-    pause_reading = st.sidebar.button("Pause")
+    generate_full_audio = st.sidebar.button("Generate Full Audio")
 
     export_pdf = st.sidebar.button("Download Dyslexia-Friendly PDF")
-
 
     # -------- TEXT EXTRACTION --------
 
@@ -107,7 +96,6 @@ if uploaded_file is not None:
 
     original_text = clean_text(original_text)
 
-
     # -------- DIFFICULT WORD DETECTION --------
 
     difficult_words = set()
@@ -115,8 +103,7 @@ if uploaded_file is not None:
     if use_syllables or highlight_difficulty:
         difficult_words = detect_difficult_words(original_text)
 
-
-    # -------- READER TEXT PIPELINE --------
+    # -------- TEXT PIPELINE --------
 
     reader_text = original_text
 
@@ -126,37 +113,25 @@ if uploaded_file is not None:
     if highlight_difficulty:
         reader_text = highlight_difficult_words(reader_text, difficult_words)
 
-
     # -------- THEME --------
 
     background, text_color = get_theme(theme)
 
+    # -------- FULL AUDIO GENERATION --------
 
-    # -------- AUDIO GENERATION --------
+    if generate_full_audio:
 
-    if start_reading:
+        with st.spinner("Generating full narration audio..."):
 
-        st.session_state.auto_reading = True
+            tts_text = re.sub(r'<[^>]+>', '', reader_text)
+            tts_text = tts_text.replace("-", "")
 
-        if not st.session_state.audio_initialized:
-
-            with st.spinner("Generating audio..."):
-
-                tts_text = re.sub(r'<[^>]+>', '', reader_text)
-                tts_text = tts_text.replace("-", "")
-
-                st.session_state.audio_file = generate_audio(tts_text)
-                st.session_state.audio_initialized = True
-
-    if pause_reading:
-        st.session_state.auto_reading = False
-
+            st.session_state.full_audio = generate_audio(tts_text)
 
     # ---------------- DISPLAY ----------------
 
     st.subheader("Reading Panel")
     st.divider()
-
 
     # -------- FOCUS MODE --------
 
@@ -165,48 +140,42 @@ if uploaded_file is not None:
         clean_focus_text = re.sub(r'<[^>]+>', '', reader_text)
 
         lines = split_into_lines(clean_focus_text)
-
         total_lines = len(lines)
-
-        if st.session_state.focus_line >= total_lines:
-            st.session_state.focus_line = 0
 
         col1, col2 = st.columns(2)
 
         if col1.button("Previous Sentence"):
-            if st.session_state.focus_line > 0:
-                st.session_state.focus_line -= 1
+            st.session_state.focus_line = max(0, st.session_state.focus_line - 1)
 
         if col2.button("Next Sentence"):
-            if st.session_state.focus_line < total_lines - 1:
-                st.session_state.focus_line += 1
-
-
-        # -------- AUTO READING --------
-
-        if st.session_state.auto_reading:
-
-            current_time = time.time()
-
-            if current_time - st.session_state.last_move_time > 4:
-
-                if st.session_state.focus_line < total_lines - 1:
-
-                    st.session_state.focus_line += 1
-                    st.session_state.last_move_time = current_time
-                    st.rerun()
-
-                else:
-
-                    st.session_state.auto_reading = False
-
+            st.session_state.focus_line = min(total_lines - 1, st.session_state.focus_line + 1)
 
         current_line = st.session_state.focus_line
+        current_sentence = lines[current_line]
+
+        # -------- SENTENCE AUDIO (LAZY GENERATION) --------
+
+        if current_line not in st.session_state.sentence_audio:
+
+            with st.spinner("Generating sentence audio..."):
+
+                audio_path = generate_audio(current_sentence)
+                st.session_state.sentence_audio[current_line] = audio_path
+
+        audio_file = st.session_state.sentence_audio[current_line]
+
+        if os.path.exists(audio_file):
+
+            with open(audio_file, "rb") as f:
+                st.audio(f.read(), format="audio/mp3")
+
+        # -------- PROGRESS --------
 
         progress = (current_line + 1) / total_lines
-
         st.progress(progress)
         st.caption(f"Reading progress: {int(progress * 100)}%")
+
+        # -------- DISPLAY WINDOW --------
 
         start = max(0, current_line - 2)
         end = min(total_lines, current_line + 3)
@@ -266,37 +235,27 @@ if uploaded_file is not None:
             border-radius:14px;
             max-width:750px;
             margin:40px auto;
-            text-align:left;
         ">
-
         <div style="margin-bottom:1.2em;">
         {formatted_text}
         </div>
-
         </div>
         """
 
         st.markdown(styled_text, unsafe_allow_html=True)
 
+    # -------- FULL AUDIO DOWNLOAD --------
 
-    # -------- AUDIO --------
+    if st.session_state.full_audio and os.path.exists(st.session_state.full_audio):
 
-    if st.session_state.audio_file:
-
-        st.divider()
-        st.subheader("Audio Narration")
-
-        st.audio(st.session_state.audio_file)
-
-        with open(st.session_state.audio_file, "rb") as f:
+        with open(st.session_state.full_audio, "rb") as f:
 
             st.download_button(
-                "Download Audio",
+                "Download Full Narration",
                 f,
                 file_name="reading_audio.mp3",
                 mime="audio/mp3"
             )
-
 
     # -------- PDF EXPORT --------
 
