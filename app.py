@@ -103,7 +103,7 @@ if uploaded_file is not None:
     if use_syllables or highlight_difficulty:
         difficult_words = detect_difficult_words(original_text)
 
-    # -------- TEXT PIPELINE --------
+    # -------- DISPLAY TEXT PIPELINE --------
 
     reader_text = original_text
 
@@ -123,8 +123,7 @@ if uploaded_file is not None:
 
         with st.spinner("Generating full narration audio..."):
 
-            tts_text = re.sub(r'<[^>]+>', '', reader_text)
-            tts_text = tts_text.replace("-", "")
+            tts_text = original_text
 
             st.session_state.full_audio = generate_audio(tts_text)
 
@@ -137,10 +136,14 @@ if uploaded_file is not None:
 
     if focus_mode:
 
-        clean_focus_text = re.sub(r'<[^>]+>', '', reader_text)
+        # Sentences for AUDIO (no syllables)
+        audio_lines = split_into_lines(original_text)
 
-        lines = split_into_lines(clean_focus_text)
-        total_lines = len(lines)
+        # Sentences for DISPLAY
+        display_text = re.sub(r'<[^>]+>', '', reader_text)
+        display_lines = split_into_lines(display_text)
+
+        total_lines = len(audio_lines)
 
         col1, col2 = st.columns(2)
 
@@ -151,15 +154,16 @@ if uploaded_file is not None:
             st.session_state.focus_line = min(total_lines - 1, st.session_state.focus_line + 1)
 
         current_line = st.session_state.focus_line
-        current_sentence = lines[current_line]
 
-        # -------- SENTENCE AUDIO (LAZY GENERATION) --------
+        audio_sentence = audio_lines[current_line]
+
+        # -------- SENTENCE AUDIO --------
 
         if current_line not in st.session_state.sentence_audio:
 
             with st.spinner("Generating sentence audio..."):
 
-                audio_path = generate_audio(current_sentence)
+                audio_path = generate_audio(audio_sentence)
                 st.session_state.sentence_audio[current_line] = audio_path
 
         audio_file = st.session_state.sentence_audio[current_line]
@@ -194,7 +198,7 @@ if uploaded_file is not None:
                         font-size:{font_size}px;
                         font-family:{font_family};
                     ">
-                    {lines[i]}
+                    {display_lines[i]}
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -210,7 +214,7 @@ if uploaded_file is not None:
                         font-size:{font_size}px;
                         font-family:{font_family};
                     ">
-                    {lines[i]}
+                    {display_lines[i]}
                     </div>
                     """,
                     unsafe_allow_html=True
