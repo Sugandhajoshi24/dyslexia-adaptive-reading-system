@@ -1,17 +1,21 @@
-import os
-import time
 from gtts import gTTS
+import os
+import uuid
 
-def generate_audio(text):
 
-    folder = "downloads"
+def generate_audio(text, lang='en', slow=False):
+    """Generate audio from text using Google Text-to-Speech"""
 
-    if not os.path.exists(folder):
-        os.makedirs(folder)
+    try:
+        os.makedirs("downloads", exist_ok=True)
 
-    filename = f"{folder}/audio_{int(time.time())}.mp3"
+        filename = f"downloads/audio_{uuid.uuid4().hex[:8]}.mp3"
 
-    tts = gTTS(text)
-    tts.save(filename)
+        tts = gTTS(text=text, lang=lang, slow=slow)
+        tts.save(filename)
 
-    return filename
+        return filename
+
+    except Exception as e:
+        print(f"TTS ERROR: {e}")
+        return None

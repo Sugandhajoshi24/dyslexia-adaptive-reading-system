@@ -1,285 +1,195 @@
+"""
+Dyslexia Adaptive Reading System — Main Application
+"""
+
 import streamlit as st
-import time
-import re
+import streamlit.components.v1 as components
 import os
 
-from modules.document_processing.extract_text import extract_pdf_text
-from modules.text_processing.syllable_splitter import syllabify_difficult_words
-from modules.text_processing.sentence_splitter import split_into_lines
-from modules.text_processing.text_cleaner import clean_text
-from modules.text_processing.difficulty_detector import detect_difficult_words, highlight_difficult_words
-from modules.reader.theme_manager import get_theme
+from modules.config.themes import get_theme_config
+from modules.config.constants import (
+    SAMPLE_TEXT, MIN_SENTENCE_LENGTH, SUPPORTED_FILE_TYPES
+)
+from modules.config.css_generator import generate_global_css
+
+from modules.ui.components import (
+    load_custom_font, render_header,
+    render_upload_hint, render_mode_badge, render_reading_panel
+)
+from modules.ui.sidebar import render_sidebar
+from modules.ui.ui_styles import load_ui_styles
+from modules.ui.guided_reader import render_speech_sync
+from modules.ui.focus_reader import render_focus_mode
+from modules.ui.document_stats import render_document_stats
+from modules.ui.word_tooltip import get_tooltip_css
+
+from modules.document_processing.file_handler import extract_text_from_upload
+
+from modules.text_processing.processor import (
+    process_text, process_sentence, split_into_sentences
+)
+from modules.text_processing.document_analyzer import analyze_document
+
+from modules.export.export_handler import (
+    handle_pdf_export, handle_docx_export, handle_audio_export
+)
 from modules.audio.tts_engine import generate_audio
-from modules.export.pdf_exporter import generate_accessible_pdf
 
 
-# ---------------- PAGE CONFIG ----------------
-
+# ── Page Config ──────────────────────────────────────────
 st.set_page_config(
     page_title="Dyslexia Adaptive Reader",
-    page_icon="📖",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# ---------------- SESSION STATE ----------------
+# ── Init ─────────────────────────────────────────────────
+load_custom_font()
+st.markdown(load_ui_styles(), unsafe_allow_html=True)
 
-if "focus_line" not in st.session_state:
-    st.session_state.focus_line = 0
+settings = render_sidebar()
+theme    = get_theme_config(settings["theme_name"])
 
-if "sentence_audio" not in st.session_state:
-    st.session_state.sentence_audio = {}
-
-if "full_audio" not in st.session_state:
-    st.session_state.full_audio = None
-
-
-# ---------------- HEADER ----------------
-
-st.title("Dyslexia-Friendly Adaptive Reading System")
-
-st.write(
-"""
-Assistive reading interface with syllable support, customizable layouts,
-focus mode navigation, and text-to-speech narration.
-"""
+st.markdown(
+    generate_global_css(
+        theme,
+        settings["font_family"],
+        settings["font_size"],
+        settings["line_spacing"],
+        settings["letter_spacing"]
+    ),
+    unsafe_allow_html=True
 )
 
-# ---------------- FILE UPLOAD ----------------
+# ── Cancel leftover speech from guided mode ──────────────
+# Uses components.html which reliably executes JavaScript
+if settings["reading_mode"] != "🔊 Guided Reading":
+    components.html("""
+        <script>
+        try { speechSynthesis.cancel(); } catch(e) {}
+        try { window.parent.speechSynthesis.cancel(); } catch(e) {}
+        </script>
+    """, height=0)
+
+# ── Word Tooltip CSS ─────────────────────────────────────
+st.markdown(get_tooltip_css(theme), unsafe_allow_html=True)
+
+# ── Header + Upload ──────────────────────────────────────
+render_header()
 
 uploaded_file = st.file_uploader(
-    "Upload PDF or TXT Document",
-    type=["pdf", "txt"]
+    "Upload TXT, PDF, or DOCX",
+    type=SUPPORTED_FILE_TYPES,
+    help="Supports .txt, .pdf, and .docx files"
 )
 
-st.info("Upload a document to begin reading.")
+if uploaded_file:
+    original_text = extract_text_from_upload(uploaded_file)
+else:
+    render_upload_hint()
+    use_sample    = st.checkbox("📝 Use sample text to preview settings")
+    original_text = SAMPLE_TEXT if use_sample else None
 
-# ---------------- MAIN PIPELINE ----------------
+# ── Main Processing ──────────────────────────────────────
+if original_text:
 
-if uploaded_file is not None:
+    result = process_text(original_text, settings)
 
-    # -------- SIDEBAR --------
+    # ── Document Analysis ─────────────────────────────
+    analysis = analyze_document(original_text, result["difficult_words"])
+    render_document_stats(analysis, theme)
 
-    st.sidebar.title("Reader Controls")
+    # ── 🔊 GUIDED READING ────────────────────────────
+    if settings["reading_mode"] == "🔊 Guided Reading":
 
-    font_family = st.sidebar.selectbox(
-        "Font",
-        ["Arial", "Verdana", "Georgia", "Times New Roman"]
-    )
+        render_mode_badge("🔊 Guided Reading Mode")
 
-    font_size = st.sidebar.slider("Font Size", 14, 40, 20)
-
-    line_spacing = st.sidebar.slider("Line Spacing", 1.0, 3.0, 1.5)
-
-    letter_spacing = st.sidebar.slider("Letter Spacing", 0.0, 5.0, 1.0)
-
-    theme = st.sidebar.selectbox(
-        "Color Theme",
-        ["Default", "Sepia", "Dark", "High Contrast"]
-    )
-
-    use_syllables = st.sidebar.checkbox("Enable Syllable Splitting")
-
-    highlight_difficulty = st.sidebar.checkbox("Highlight Difficult Words")
-
-    focus_mode = st.sidebar.checkbox("Enable Focus Mode")
-
-    generate_full_audio = st.sidebar.button("Generate Full Audio")
-
-    export_pdf = st.sidebar.button("Download Dyslexia-Friendly PDF")
-
-    # -------- TEXT EXTRACTION --------
-
-    if uploaded_file.type == "application/pdf":
-        original_text = extract_pdf_text(uploaded_file)
-    else:
-        original_text = uploaded_file.read().decode("utf-8")
-
-    original_text = clean_text(original_text)
-
-    # -------- DIFFICULT WORD DETECTION --------
-
-    difficult_words = set()
-
-    if use_syllables or highlight_difficulty:
-        difficult_words = detect_difficult_words(original_text)
-
-    # -------- DISPLAY TEXT PIPELINE --------
-
-    reader_text = original_text
-
-    if use_syllables:
-        reader_text = syllabify_difficult_words(reader_text, difficult_words)
-
-    if highlight_difficulty:
-        reader_text = highlight_difficult_words(reader_text, difficult_words)
-
-    # -------- THEME --------
-
-    background, text_color = get_theme(theme)
-
-    # -------- FULL AUDIO GENERATION --------
-
-    if generate_full_audio:
-
-        with st.spinner("Generating full narration audio..."):
-
-            tts_text = original_text
-
-            st.session_state.full_audio = generate_audio(tts_text)
-
-    # ---------------- DISPLAY ----------------
-
-    st.subheader("Reading Panel")
-    st.divider()
-
-    # -------- FOCUS MODE --------
-
-    if focus_mode:
-
-        # Sentences for AUDIO (no syllables)
-        audio_lines = split_into_lines(original_text)
-
-        # Sentences for DISPLAY
-        display_text = re.sub(r'<[^>]+>', '', reader_text)
-        display_lines = split_into_lines(display_text)
-
-        total_lines = len(audio_lines)
-
-        col1, col2 = st.columns(2)
-
-        if col1.button("Previous Sentence"):
-            st.session_state.focus_line = max(0, st.session_state.focus_line - 1)
-
-        if col2.button("Next Sentence"):
-            st.session_state.focus_line = min(total_lines - 1, st.session_state.focus_line + 1)
-
-        current_line = st.session_state.focus_line
-
-        audio_sentence = audio_lines[current_line]
-
-        # -------- SENTENCE AUDIO --------
-
-        if current_line not in st.session_state.sentence_audio:
-
-            with st.spinner("Generating sentence audio..."):
-
-                audio_path = generate_audio(audio_sentence)
-                st.session_state.sentence_audio[current_line] = audio_path
-
-        audio_file = st.session_state.sentence_audio[current_line]
-
-        if os.path.exists(audio_file):
-
-            with open(audio_file, "rb") as f:
-                st.audio(f.read(), format="audio/mp3")
-
-        # -------- PROGRESS --------
-
-        progress = (current_line + 1) / total_lines
-        st.progress(progress)
-        st.caption(f"Reading progress: {int(progress * 100)}%")
-
-        # -------- DISPLAY WINDOW --------
-
-        start = max(0, current_line - 2)
-        end = min(total_lines, current_line + 3)
-
-        for i in range(start, end):
-
-            if i == current_line:
-
-                st.markdown(
-                    f"""
-                    <div style="
-                        background-color:rgba(255,214,102,0.6);
-                        padding:12px;
-                        border-radius:8px;
-                        margin-bottom:10px;
-                        font-size:{font_size}px;
-                        font-family:{font_family};
-                    ">
-                    {display_lines[i]}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-            else:
-
-                st.markdown(
-                    f"""
-                    <div style="
-                        opacity:0.35;
-                        margin-bottom:10px;
-                        font-size:{font_size}px;
-                        font-family:{font_family};
-                    ">
-                    {display_lines[i]}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-    else:
-
-        formatted_text = reader_text.replace(
-            "\n\n", '</div><div style="margin-bottom:1.2em;">'
+        render_speech_sync(
+            display_text=result["reader_text"],
+            tts_text=result["tts_text"],
+            font_family=settings["font_family"],
+            font_size=settings["font_size"],
+            theme=settings["theme_name"],
+            line_spacing=settings["line_spacing"],
+            letter_spacing=settings["letter_spacing"],
+            theme_config=theme
         )
 
-        styled_text = f"""
-        <div style="
-            background-color:{background};
-            color:{text_color};
-            font-family:{font_family};
-            font-size:{font_size}px;
-            line-height:{line_spacing + 0.4};
-            letter-spacing:{letter_spacing}px;
-            word-spacing:0.08em;
-            padding:50px;
-            border-radius:14px;
-            max-width:750px;
-            margin:40px auto;
-        ">
-        <div style="margin-bottom:1.2em;">
-        {formatted_text}
-        </div>
-        </div>
-        """
+    # ── 🔍 FOCUS MODE ────────────────────────────────
+    elif settings["reading_mode"] == "🔍 Focus Mode":
 
-        st.markdown(styled_text, unsafe_allow_html=True)
+        render_mode_badge("🔍 Focus Mode — Sentence by Sentence")
 
-    # -------- FULL AUDIO DOWNLOAD --------
+        raw_sentences = split_into_sentences(
+            original_text, MIN_SENTENCE_LENGTH
+        )
+        total = len(raw_sentences)
 
-    if st.session_state.full_audio and os.path.exists(st.session_state.full_audio):
+        sentences_tts  = raw_sentences[:]
+        sentences_rich = [
+            process_sentence(s, result["difficult_words"], settings)
+            for s in raw_sentences
+        ]
 
-        with open(st.session_state.full_audio, "rb") as f:
+        if "focus_idx" not in st.session_state:
+            st.session_state.focus_idx = 0
+        if "focus_audio" not in st.session_state:
+            st.session_state.focus_audio = {}
 
-            st.download_button(
-                "Download Full Narration",
-                f,
-                file_name="reading_audio.mp3",
-                mime="audio/mp3"
+        st.session_state.focus_idx = max(
+            0, min(st.session_state.focus_idx, total - 1)
+        )
+        idx = st.session_state.focus_idx
+
+        if total > 0 and idx not in st.session_state.focus_audio:
+            with st.spinner(f"🎵 Preparing audio for sentence {idx + 1}..."):
+                af = generate_audio(sentences_tts[idx])
+                if af and os.path.exists(af):
+                    with open(af, "rb") as f:
+                        st.session_state.focus_audio[idx] = f.read()
+                    os.remove(af)
+
+        if total > 0:
+            render_focus_mode(
+                sentences_plain=sentences_tts,
+                sentences_rich=sentences_rich,
+                idx=idx,
+                total=total,
+                theme_config=theme,
+                font_family=settings["font_family"],
+                font_size=settings["font_size"],
+                line_spacing=settings["line_spacing"],
+                letter_spacing=settings["letter_spacing"],
+                audio_cache=st.session_state.focus_audio
             )
+        else:
+            st.warning("No sentences found in the text.")
 
-    # -------- PDF EXPORT --------
+    # ── 📖 NORMAL READING ────────────────────────────
+    else:
 
-    if export_pdf:
+        render_mode_badge("📖 Normal Reading Mode")
+        render_reading_panel(result["reader_text"])
 
-        with st.spinner("Generating PDF..."):
+    # ── EXPORTS ───────────────────────────────────────
+    if settings["export_pdf"]:
+        handle_pdf_export(
+            result["pdf_text"],
+            result["difficult_words"],
+            settings["highlight_difficulty"],
+            settings["font_size"],
+            settings["line_spacing"]
+        )
 
-            pdf_text = re.sub(r'<[^>]+>', '', reader_text)
+    if settings["export_docx"]:
+        handle_docx_export(
+            result["pdf_text"],
+            result["difficult_words"],
+            settings["highlight_difficulty"],
+            settings["use_syllables"],
+            settings["font_size"],
+            settings["line_spacing"]
+        )
 
-            pdf_file = generate_accessible_pdf(
-                pdf_text,
-                font_size=font_size,
-                line_spacing=line_spacing
-            )
-
-        with open(pdf_file, "rb") as f:
-
-            st.download_button(
-                "Download Accessible PDF",
-                f,
-                file_name="dyslexia_reader.pdf",
-                mime="application/pdf"
-            )
+    if settings["export_audio"]:
+        handle_audio_export(result["tts_text"])
