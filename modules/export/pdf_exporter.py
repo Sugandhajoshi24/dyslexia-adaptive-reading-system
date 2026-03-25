@@ -1,3 +1,8 @@
+"""
+PDF export — multilingual.
+Uses OpenDyslexic for English, Noto Sans Devanagari for Hindi.
+"""
+
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
@@ -9,18 +14,29 @@ import time
 import re
 import pyphen
 
-BASE_DIR  = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-FONT_PATH = os.path.join(BASE_DIR, "assets", "fonts", "OpenDyslexic3-Regular.ttf")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+FONT_DIR = os.path.join(BASE_DIR, "assets", "fonts")
 
-dic = pyphen.Pyphen(lang="en")
+dic_en = pyphen.Pyphen(lang="en")
 
 
 def _syllabify_word(word, difficult_words):
-    """Return syllabified version of word if it is in difficult_words set."""
     clean = re.sub(r'[^\w]', '', word).lower()
     if clean in difficult_words:
-        return dic.inserted(word)
+        return dic_en.inserted(word)
     return word
+
+
+def _register_font(font_name, font_file):
+    """Register a font if the file exists. Returns True if successful."""
+    font_path = os.path.join(FONT_DIR, font_file)
+    if os.path.exists(font_path):
+        try:
+            pdfmetrics.registerFont(TTFont(font_name, font_path))
+            return True
+        except Exception:
+            return False
+    return False
 
 
 def generate_accessible_pdf(
@@ -28,38 +44,35 @@ def generate_accessible_pdf(
     difficult_words=None,
     use_syllables=False,
     font_size=20,
-    line_spacing=1.8
+    line_spacing=1.8,
+    lang="en"
 ):
-    """
-    Generate a dyslexia-friendly PDF.
-
-    When use_syllables=False but the text already contains hyphens
-    (pre-syllabified from app.py), those hyphens are preserved as-is
-    without double-processing.
-    """
+    """Generate a dyslexia-friendly PDF with correct font for each language."""
     if difficult_words is None:
         difficult_words = set()
 
     os.makedirs("downloads", exist_ok=True)
-    filename = f"downloads/dyslexia_reader_{int(time.time())}.pdf"
+    filename = "downloads/dyslexia_reader_" + str(int(time.time())) + ".pdf"
 
-    # Register font
-    if os.path.exists(FONT_PATH):
-        try:
-            pdfmetrics.registerFont(TTFont("OpenDyslexic", FONT_PATH))
-            font_name = "OpenDyslexic"
-        except Exception:
-            font_name = "Helvetica"
+    # Register and select font based on language
+    font_name = "Helvetica"  # fallback
+
+    if lang == "hi":
+        # Try Noto Sans Devanagari for Hindi
+        if _register_font("NotoDevanagari", "NotoSansDevanagari-Regular.ttf"):
+            font_name = "NotoDevanagari"
+        elif _register_font("NotoDevanagariVar", "NotoSansDevanagari-VariableFont_wdth,wght.ttf"):
+            font_name = "NotoDevanagariVar"
     else:
-        font_name = "Helvetica"
+        # English — try OpenDyslexic
+        if _register_font("OpenDyslexic", "OpenDyslexic3-Regular.ttf"):
+            font_name = "OpenDyslexic"
 
     doc = SimpleDocTemplate(
         filename,
         pagesize=letter,
-        leftMargin=72,
-        rightMargin=72,
-        topMargin=72,
-        bottomMargin=72
+        leftMargin=72, rightMargin=72,
+        topMargin=72, bottomMargin=72
     )
 
     style = ParagraphStyle(
@@ -83,17 +96,18 @@ def generate_accessible_pdf(
         tagged = []
 
         for word in words:
-            # Get the root word (strip hyphens + punctuation) for lookup
-            root = re.sub(r'[^\w]', '', word).lower()
+            # Get root word for lookup
+            if lang == "hi":
+                root = re.sub(r'[^\u0900-\u097F]', '', word)
+            else:
+                root = re.sub(r'[^\w]', '', word).lower()
 
-            # Only syllabify here if use_syllables=True
-            # (app.py passes False because text is already syllabified)
-            if use_syllables:
+            if use_syllables and lang == "en":
                 display = _syllabify_word(word, difficult_words)
             else:
                 display = word
 
-            # Escape XML special characters
+            # Escape XML
             safe = (
                 display
                 .replace("&", "&amp;")
@@ -101,10 +115,10 @@ def generate_accessible_pdf(
                 .replace(">", "&gt;")
             )
 
-            # Highlight if the ROOT word (without hyphens) is difficult
+            # Highlight
             if root in difficult_words and len(difficult_words) > 0:
                 tagged.append(
-                    f'<font backColor="#FFD54F"><b>{safe}</b></font>'
+                    '<font backColor="#FFD54F"><b>' + safe + '</b></font>'
                 )
             else:
                 tagged.append(safe)

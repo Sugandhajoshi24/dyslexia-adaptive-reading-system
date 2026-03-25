@@ -1,21 +1,33 @@
+"""
+TTS engine — multilingual.
+"""
+
 from gtts import gTTS
 import os
+import re
 import uuid
 
 
 def generate_audio(text, lang='en', slow=False):
-    """Generate audio from text using Google Text-to-Speech"""
-
+    """
+    Generate MP3 audio from text.
+    Supports: en, hi, ta, and 50+ languages via gTTS.
+    """
     try:
+        filename = "downloads/audio_" + uuid.uuid4().hex + ".mp3"
         os.makedirs("downloads", exist_ok=True)
 
-        filename = f"downloads/audio_{uuid.uuid4().hex[:8]}.mp3"
+        clean = re.sub(r'<[^>]+>', '', text)
+        clean = clean.strip()
 
-        tts = gTTS(text=text, lang=lang, slow=slow)
+        if not clean:
+            return None
+
+        tts = gTTS(text=clean, lang=lang, slow=slow)
         tts.save(filename)
 
         return filename
 
     except Exception as e:
-        print(f"TTS ERROR: {e}")
+        print("[TTS ERROR] " + str(e))
         return None

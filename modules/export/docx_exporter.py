@@ -1,5 +1,5 @@
 """
-Export processed text to a dyslexia-friendly DOCX file.
+Export to dyslexia-friendly DOCX — multilingual.
 """
 
 import os
@@ -7,14 +7,25 @@ import time
 import re
 import pyphen
 
-dic = pyphen.Pyphen(lang="en")
+dic_en = pyphen.Pyphen(lang="en")
 
 
-def _syllabify_word(word, difficult_words):
+def _syllabify_word(word, difficult_words, lang="en"):
     """Return syllabified version if word is difficult."""
-    clean = re.sub(r'[^\w]', '', word).lower()
-    if clean in difficult_words:
-        return dic.inserted(word)
+    if lang == "en":
+        clean = re.sub(r'[^\w]', '', word).lower()
+        if clean in difficult_words:
+            return dic_en.inserted(word)
+    elif lang == "hi":
+        core = re.sub(r'[^\u0900-\u097F]', '', word)
+        if core in difficult_words:
+            try:
+                from indicnlp.syllable import syllabifier
+                syls = syllabifier.orthographic_syllabify(word, 'hi')
+                if syls and len(syls) > 1:
+                    return "-".join(syls)
+            except Exception:
+                pass
     return word
 
 
@@ -23,14 +34,10 @@ def generate_accessible_docx(
     difficult_words=None,
     use_syllables=False,
     font_size=20,
-    line_spacing=1.8
+    line_spacing=1.8,
+    lang="en"
 ):
-    """
-    Generate a dyslexia-friendly DOCX file.
-
-    When use_syllables=False but text already contains hyphens
-    (pre-syllabified), those hyphens are preserved without double-processing.
-    """
+    """Generate a dyslexia-friendly DOCX file."""
     from docx import Document
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_LINE_SPACING
@@ -39,23 +46,27 @@ def generate_accessible_docx(
         difficult_words = set()
 
     os.makedirs("downloads", exist_ok=True)
-    filename = f"downloads/dyslexia_reader_{int(time.time())}.docx"
+    filename = "downloads/dyslexia_reader_" + str(int(time.time())) + ".docx"
+
+    # Choose font based on language
+    if lang == "hi":
+        font_name = "Noto Sans Devanagari"
+    else:
+        font_name = "OpenDyslexic"
 
     doc = Document()
 
-    # Page margins
     for section in doc.sections:
         section.left_margin = Inches(1.2)
         section.right_margin = Inches(1.2)
         section.top_margin = Inches(1.0)
         section.bottom_margin = Inches(1.0)
 
-    # Set default font on Normal style
+    # Set default font
     style = doc.styles['Normal']
-    style.font.name = "OpenDyslexic"
+    style.font.name = font_name
     style.font.size = Pt(font_size)
 
-    # Process paragraphs
     paragraphs = text.split("\n")
 
     for para_text in paragraphs:
@@ -73,22 +84,30 @@ def generate_accessible_docx(
         words = para_text.split()
 
         for i, word in enumerate(words):
-            root = re.sub(r'[^\w]', '', word).lower()
+            # Get root word for difficulty lookup
+            if lang == "hi":
+                root = re.sub(r'[^\u0900-\u097F]', '', word)
+            else:
+                root = re.sub(r'[^\w]', '', word).lower()
 
+            # Syllabify if enabled
             if use_syllables:
-                display = _syllabify_word(word, difficult_words)
+                display = _syllabify_word(word, difficult_words, lang=lang)
             else:
                 display = word
 
+            # Space between words
             if i > 0:
                 space_run = paragraph.add_run(" ")
                 space_run.font.size = Pt(font_size)
-                space_run.font.name = "OpenDyslexic"
+                space_run.font.name = font_name
 
+            # Word run
             run = paragraph.add_run(display)
             run.font.size = Pt(font_size)
-            run.font.name = "OpenDyslexic"
+            run.font.name = font_name
 
+            # Highlight difficult words
             if root in difficult_words and len(difficult_words) > 0:
                 run.bold = True
                 run.font.highlight_color = 7  # Yellow

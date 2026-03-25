@@ -1,5 +1,5 @@
 """
-Handles all export operations: PDF, DOCX, and Audio.
+Export handler — multilingual.
 """
 
 import os
@@ -11,8 +11,8 @@ from modules.audio.tts_engine import generate_audio
 from modules.config.constants import MAX_TTS_CHARS
 
 
-def handle_pdf_export(pdf_text, difficult_words, highlight_enabled, font_size, line_spacing):
-    """Generate dyslexia-friendly PDF and offer download."""
+def handle_pdf_export(pdf_text, difficult_words, highlight_enabled,
+                      font_size, line_spacing, lang="en"):
     with st.spinner("Generating PDF..."):
         try:
             fp = generate_accessible_pdf(
@@ -20,11 +20,11 @@ def handle_pdf_export(pdf_text, difficult_words, highlight_enabled, font_size, l
                 difficult_words=difficult_words if highlight_enabled else set(),
                 use_syllables=False,
                 font_size=font_size,
-                line_spacing=line_spacing
+                line_spacing=line_spacing,
+                lang=lang
             )
             with open(fp, "rb") as f:
                 pdf_data = f.read()
-
             st.sidebar.download_button(
                 label="📥 Download PDF",
                 data=pdf_data,
@@ -34,16 +34,12 @@ def handle_pdf_export(pdf_text, difficult_words, highlight_enabled, font_size, l
             )
             st.sidebar.success("✅ PDF ready!")
             os.remove(fp)
-
         except Exception as e:
-            st.sidebar.error(f"PDF Error: {e}")
+            st.sidebar.error("PDF Error: " + str(e))
 
 
-def handle_docx_export(
-    pdf_text, difficult_words, highlight_enabled,
-    use_syllables, font_size, line_spacing
-):
-    """Generate dyslexia-friendly DOCX and offer download."""
+def handle_docx_export(pdf_text, difficult_words, highlight_enabled,
+                       use_syllables, font_size, line_spacing, lang="en"):
     with st.spinner("Generating DOCX..."):
         try:
             fp = generate_accessible_docx(
@@ -51,11 +47,11 @@ def handle_docx_export(
                 difficult_words=difficult_words if highlight_enabled else set(),
                 use_syllables=False,
                 font_size=font_size,
-                line_spacing=line_spacing
+                line_spacing=line_spacing,
+                lang=lang
             )
             with open(fp, "rb") as f:
                 docx_data = f.read()
-
             st.sidebar.download_button(
                 label="📥 Download DOCX",
                 data=docx_data,
@@ -64,51 +60,49 @@ def handle_docx_export(
                 key="docx_download"
             )
             st.sidebar.success("✅ DOCX ready!")
-            st.sidebar.info(
-                "💡 **Font Note:** The DOCX uses OpenDyslexic font. "
-                "If your Word/LibreOffice doesn't have it installed, "
-                "it will use the default font instead. "
-                "[Download OpenDyslexic](https://opendyslexic.org/)"
-            )
+
+            # Only show OpenDyslexic message for English
+            if lang == "en":
+                st.sidebar.info(
+                    "💡 For best results, install OpenDyslexic font. "
+                    "[Download here](https://opendyslexic.org/)"
+                )
+            elif lang == "hi":
+                st.sidebar.info(
+                    "💡 DOCX uses Noto Sans Devanagari font. "
+                    "Install it for best display. "
+                    "[Download here](https://fonts.google.com/noto/specimen/Noto+Sans+Devanagari)"
+                )
+
             os.remove(fp)
-
-        except ImportError:
-            st.sidebar.error("python-docx not installed. Run: pip install python-docx")
         except Exception as e:
-            st.sidebar.error(f"DOCX Error: {e}")
+            st.sidebar.error("DOCX Error: " + str(e))
 
 
-def handle_audio_export(tts_text):
-    """Generate full audio and offer download."""
+def handle_audio_export(tts_text, lang="en"):
     chunks = [
         tts_text[i:i + MAX_TTS_CHARS]
         for i in range(0, len(tts_text), MAX_TTS_CHARS)
     ]
-
-    with st.spinner(f"🎵 Generating audio ({len(chunks)} part(s))..."):
+    with st.spinner("🎵 Generating audio (" + str(len(chunks)) + " part(s))..."):
         all_ok = True
-
         for ci, chunk in enumerate(chunks):
-            af = generate_audio(chunk)
-
+            af = generate_audio(chunk, lang=lang)
             if af and os.path.exists(af):
                 with open(af, "rb") as f:
                     ab = f.read()
-
-                label = "Full Audio" if len(chunks) == 1 else f"Part {ci + 1}"
-
+                label = "Full Audio" if len(chunks) == 1 else "Part " + str(ci + 1)
                 st.sidebar.audio(ab, format="audio/mp3")
                 st.sidebar.download_button(
-                    label=f"⬇️ Download {label}",
+                    label="⬇️ Download " + label,
                     data=ab,
-                    file_name=f"audio_part_{ci + 1}.mp3",
+                    file_name="audio_part_" + str(ci + 1) + ".mp3",
                     mime="audio/mp3",
-                    key=f"exp_audio_{ci}"
+                    key="exp_audio_" + str(ci)
                 )
                 os.remove(af)
             else:
                 all_ok = False
-                st.sidebar.error(f"Failed: chunk {ci + 1}")
-
+                st.sidebar.error("Failed: chunk " + str(ci + 1))
         if all_ok:
             st.sidebar.success("✅ Audio ready!")

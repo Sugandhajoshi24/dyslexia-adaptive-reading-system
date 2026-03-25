@@ -10,7 +10,8 @@ def render_speech_sync(
     theme="Light",
     line_spacing=1.8,
     letter_spacing=1.0,
-    theme_config=None
+    theme_config=None,
+    speech_lang="en-US"
 ):
     if theme_config is None:
         theme_config = {
@@ -24,18 +25,16 @@ def render_speech_sync(
 
     TOTAL_HEIGHT = 700
 
-    # Build HTML as regular string concatenation to avoid f-string escaping issues
     html = _build_html(
         safe_tts, safe_display, t, font_family, font_size,
-        line_spacing, letter_spacing, TOTAL_HEIGHT
+        line_spacing, letter_spacing, TOTAL_HEIGHT, speech_lang
     )
 
     components.html(html, height=TOTAL_HEIGHT, scrolling=False)
 
 
 def _build_html(safe_tts, safe_display, t, font_family, font_size,
-                line_spacing, letter_spacing, total_height):
-    """Build the guided reader HTML without f-string issues."""
+                line_spacing, letter_spacing, total_height, speech_lang):
 
     css = """
     html, body {
@@ -126,9 +125,9 @@ def _build_html(safe_tts, safe_display, t, font_family, font_size,
     """
 
     js = """
-    // Cancel any leftover speech immediately
     speechSynthesis.cancel();
 
+    var SPEECH_LANG = '""" + speech_lang + """';
     var TTS_TEXT     = """ + safe_tts + """;
     var DISPLAY_HTML = """ + safe_display + """;
 
@@ -224,7 +223,7 @@ def _build_html(safe_tts, safe_display, t, font_family, font_size,
     function createAndSpeak() {
         utt = new SpeechSynthesisUtterance(TTS_TEXT);
         utt.rate = rate;
-        utt.lang = "en-US";
+        utt.lang = SPEECH_LANG;
 
         utt.onboundary = function(e) {
             if (e.name !== "word") return;
@@ -255,7 +254,7 @@ def _build_html(safe_tts, safe_display, t, font_family, font_size,
             paused = false;
             document.getElementById("btnPause").innerText = "⏸ Pause";
             enableControls(true);
-            setStatus("Speaking at " + rate.toFixed(1) + "x...");
+            setStatus("Speaking...");
             createAndSpeak();
         }, 150);
     }
@@ -299,18 +298,13 @@ def _build_html(safe_tts, safe_display, t, font_family, font_size,
                 createAndSpeak();
             }, 150);
         } else {
-            setStatus("Speed: " + rate.toFixed(1) + "x — press Start");
+            setStatus("Speed: " + rate.toFixed(1) + "x");
         }
     }
 
     window.addEventListener('beforeunload', function() {
         speechSynthesis.cancel();
     });
-    try {
-        window.parent.addEventListener('beforeunload', function() {
-            speechSynthesis.cancel();
-        });
-    } catch(e) {}
     """
 
     html = """<!DOCTYPE html>
