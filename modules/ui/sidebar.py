@@ -63,11 +63,18 @@ def render_sidebar(lang_code=None, text_loaded=False):
         st.sidebar.markdown("---")
         st.sidebar.markdown("## 🛠️ Reading Tools")
 
-        # Syllable splitting — only for languages that support it
-        if lang_config.get("syllable_support", False) and lang_code == "en":
-            settings["use_syllables"] = st.sidebar.checkbox("Syllable Splitting")
-        elif lang_code != "en":
-            st.sidebar.caption("ℹ️ Syllable splitting not available for " + lang_config["name"])
+        # Language-aware segmentation toggle
+        if lang_config.get("segmentation_support", False):
+            label = lang_config.get("segmentation_label", "Word Segmentation")
+            settings["use_syllables"] = st.sidebar.checkbox(
+                label,
+                help=(
+                    "Break difficult words into smaller visual units for easier reading"
+                    if lang_code == "en"
+                    else "Segment difficult words into readable visual chunks"
+                )
+            )
+            # NOTE: Removed Hindi-specific caption — keep UI clean
 
         settings["highlight_difficulty"] = st.sidebar.checkbox("Highlight Difficult Words")
 

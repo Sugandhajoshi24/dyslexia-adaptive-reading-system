@@ -26,6 +26,16 @@ def _syllabify_word(word, difficult_words, lang="en"):
                     return "-".join(syls)
             except Exception:
                 pass
+    elif lang == "ta":
+        core = re.sub(r'[^\u0B80-\u0BFF]', '', word)
+        if core in difficult_words:
+            try:
+                from indicnlp.syllable import syllabifier
+                syls = syllabifier.orthographic_syllabify(word, 'ta')
+                if syls and len(syls) > 1:
+                    return "-".join(syls)
+            except Exception:
+                pass
     return word
 
 
@@ -51,6 +61,8 @@ def generate_accessible_docx(
     # Choose font based on language
     if lang == "hi":
         font_name = "Noto Sans Devanagari"
+    elif lang == "ta":
+        font_name = "Noto Sans Tamil"
     else:
         font_name = "OpenDyslexic"
 
@@ -62,7 +74,6 @@ def generate_accessible_docx(
         section.top_margin = Inches(1.0)
         section.bottom_margin = Inches(1.0)
 
-    # Set default font
     style = doc.styles['Normal']
     style.font.name = font_name
     style.font.size = Pt(font_size)
@@ -87,30 +98,28 @@ def generate_accessible_docx(
             # Get root word for difficulty lookup
             if lang == "hi":
                 root = re.sub(r'[^\u0900-\u097F]', '', word)
+            elif lang == "ta":
+                root = re.sub(r'[^\u0B80-\u0BFF]', '', word)
             else:
                 root = re.sub(r'[^\w]', '', word).lower()
 
-            # Syllabify if enabled
             if use_syllables:
                 display = _syllabify_word(word, difficult_words, lang=lang)
             else:
                 display = word
 
-            # Space between words
             if i > 0:
                 space_run = paragraph.add_run(" ")
                 space_run.font.size = Pt(font_size)
                 space_run.font.name = font_name
 
-            # Word run
             run = paragraph.add_run(display)
             run.font.size = Pt(font_size)
             run.font.name = font_name
 
-            # Highlight difficult words
             if root in difficult_words and len(difficult_words) > 0:
                 run.bold = True
-                run.font.highlight_color = 7  # Yellow
+                run.font.highlight_color = 7
 
     doc.save(filename)
     return filename

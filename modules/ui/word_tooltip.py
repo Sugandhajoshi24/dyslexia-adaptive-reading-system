@@ -1,146 +1,143 @@
 """
-Word Definition Tooltip.
+Word Tooltip — Pure CSS hover implementation.
 
-When a difficult word is clicked, shows its definition
-using a free dictionary API.
-Implemented via JavaScript fetch + CSS tooltip.
+English only. Normal reading mode only.
+
+Design decisions:
+- Pure CSS hover — no JavaScript, no iframe communication
+- No dictionary API — removed for reliability
+- Tooltip text comes from data-word attribute via CSS attr()
+- Survives Streamlit re-renders — no event listeners to lose
+- Works on Streamlit Cloud — no cross-origin iframe issues
 """
 
+import streamlit as st
 
-def get_tooltip_css(theme_config):
+
+def inject_tooltip_system(theme_config):
     """
-    Return CSS + JavaScript for word definition tooltips.
-    Inject this into the page for interactive word definitions.
+    Inject pure CSS tooltip into the main Streamlit page.
+
+    Method: st.markdown only — no components.html, no JavaScript.
+    CSS :hover is handled entirely by the browser.
+    Survives Streamlit re-renders because CSS is stateless.
+
+    Tooltip content comes from data-word attribute on each
+    .tooltip-trigger span — set by difficulty_detector.py.
+    No changes needed in difficulty_detector.py.
     """
     t = theme_config
 
-    return f"""
-    <style>
-    .word-clickable {{
-        cursor: pointer;
-        position: relative;
-        border-bottom: 1px dotted {t.get('accent', '#2196F3')};
-    }}
-    .word-clickable:hover {{
-        opacity: 0.8;
-    }}
+    st.markdown(
+        """
+        <style>
 
-    .word-tooltip {{
-        position: fixed;
-        background: {t.get('card', '#f7f7f7')};
-        color: {t.get('text', '#1a1a1a')};
-        border: 1px solid {t.get('border', '#e0e0e0')};
-        border-radius: 12px;
-        padding: 14px 18px;
-        max-width: 320px;
-        font-size: 14px;
-        line-height: 1.5;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-        z-index: 10000;
-        display: none;
-        font-family: Arial, sans-serif;
-    }}
-    .word-tooltip .tt-word {{
-        font-weight: 700;
-        font-size: 16px;
-        color: {t.get('accent', '#2196F3')};
-        margin-bottom: 6px;
-    }}
-    .word-tooltip .tt-pos {{
-        font-style: italic;
-        opacity: 0.6;
-        font-size: 12px;
-    }}
-    .word-tooltip .tt-def {{
-        margin-top: 4px;
-    }}
-    .word-tooltip .tt-close {{
-        position: absolute;
-        top: 6px; right: 10px;
-        cursor: pointer;
-        font-size: 16px;
-        opacity: 0.5;
-    }}
-    .word-tooltip .tt-close:hover {{ opacity: 1; }}
-    .word-tooltip .tt-loading {{
-        opacity: 0.6;
-        font-style: italic;
-    }}
-    </style>
+        /* ── Tooltip trigger word ────────────────────────────────
+           .tooltip-trigger class is set by difficulty_detector.py
+           on every highlighted difficult word span.
+           position:relative is required for ::before positioning.
+        ─────────────────────────────────────────────────────── */
+        .tooltip-trigger {
+            position: relative;
+            cursor: help;
+        }
 
-    <div class="word-tooltip" id="wordTooltip">
-        <span class="tt-close" onclick="closeTooltip()">✕</span>
-        <div class="tt-word" id="ttWord"></div>
-        <div class="tt-pos" id="ttPos"></div>
-        <div class="tt-def" id="ttDef"></div>
-    </div>
+        /* ── Tooltip bubble ──────────────────────────────────────
+           Uses CSS attr(data-word) to read the word directly
+           from the span's data-word attribute.
+           No JavaScript needed to populate this content.
 
-    <script>
-    const tooltip = document.getElementById('wordTooltip');
+           Positioned above the word.
+           Hidden by default — shown only on :hover.
+        ─────────────────────────────────────────────────────── */
+        .tooltip-trigger::before {
+            content: "Difficult word: " attr(data-word);
 
-    function closeTooltip() {{
-        tooltip.style.display = 'none';
-    }}
+            /* Hidden until hover */
+            display: block;
+            visibility: hidden;
+            opacity: 0;
+            pointer-events: none;
 
-    document.addEventListener('click', function(e) {{
-        if (!tooltip.contains(e.target) && !e.target.classList.contains('word-clickable')) {{
-            closeTooltip();
-        }}
-    }});
+            /* Position above the trigger word */
+            position: absolute;
+            bottom: calc(100% + 7px);
+            left: 50%;
+            transform: translateX(-50%);
 
-    // Make highlighted words clickable
-    document.addEventListener('DOMContentLoaded', function() {{
-        setTimeout(makeWordsClickable, 500);
-    }});
+            /* Prevent overflow on long words */
+            white-space: normal;
+            max-width: 220px;
+            word-wrap: break-word;
 
-    function makeWordsClickable() {{
-        // Find all highlighted spans (difficult words)
-        const spans = document.querySelectorAll('[style*="background-color"]');
-        spans.forEach(function(span) {{
-            span.classList.add('word-clickable');
-            span.addEventListener('click', function(e) {{
-                e.stopPropagation();
-                const word = this.innerText.replace(/[^a-zA-Z-]/g, '').replace(/-/g, '');
-                showDefinition(word, e.clientX, e.clientY);
-            }});
-        }});
-    }}
+            z-index: 9999;
 
-    function showDefinition(word, x, y) {{
-        const ttWord = document.getElementById('ttWord');
-        const ttPos = document.getElementById('ttPos');
-        const ttDef = document.getElementById('ttDef');
+            /* Appearance — theme-aware colors */
+            background: """ + t.get('card', '#f7f7f7') + """;
+            color: """ + t.get('text', '#1a1a1a') + """;
+            border: 1px solid """ + t.get('border', '#e0e0e0') + """;
+            border-radius: 8px;
+            padding: 5px 12px;
+            font-size: 12px;
+            font-family: Arial, sans-serif;
+            font-weight: 500;
+            line-height: 1.4;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 
-        ttWord.innerText = word;
-        ttPos.innerText = '';
-        ttDef.innerHTML = '<span class="tt-loading">Loading definition...</span>';
+            /* Smooth reveal */
+            transition: opacity 0.15s ease, visibility 0.15s ease;
+        }
 
-        // Position tooltip
-        tooltip.style.display = 'block';
-        tooltip.style.left = Math.min(x, window.innerWidth - 340) + 'px';
-        tooltip.style.top = (y + 20) + 'px';
+        /* ── Arrow pointing down toward the word ─────────────────
+           ::after creates the small triangle below the bubble.
+           Matches border color of the tooltip bubble.
+        ─────────────────────────────────────────────────────── */
+        .tooltip-trigger::after {
+            content: '';
 
-        // Fetch from free dictionary API
-        fetch('https://api.dictionaryapi.dev/api/v2/entries/en/' + word)
-            .then(r => r.json())
-            .then(data => {{
-                if (Array.isArray(data) && data.length > 0) {{
-                    const entry = data[0];
-                    const meaning = entry.meanings[0];
-                    const pos = meaning ? meaning.partOfSpeech : '';
-                    const def = meaning && meaning.definitions[0]
-                        ? meaning.definitions[0].definition
-                        : 'No definition found.';
+            display: block;
+            visibility: hidden;
+            opacity: 0;
+            pointer-events: none;
 
-                    ttPos.innerText = pos;
-                    ttDef.innerText = def;
-                }} else {{
-                    ttDef.innerText = 'Definition not found for this word.';
-                }}
-            }})
-            .catch(() => {{
-                ttDef.innerText = 'Could not load definition. Check your internet connection.';
-            }});
-    }}
-    </script>
-    """
+            position: absolute;
+            bottom: calc(100% + 2px);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999;
+
+            /* Triangle via border trick */
+            border: 5px solid transparent;
+            border-top-color: """ + t.get('border', '#e0e0e0') + """;
+
+            transition: opacity 0.15s ease, visibility 0.15s ease;
+        }
+
+        /* ── Show both bubble and arrow on hover ─────────────── */
+        .tooltip-trigger:hover::before,
+        .tooltip-trigger:hover::after {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* ── Hide old tooltip-content spans ──────────────────────
+           difficulty_detector.py still renders:
+               <span class='tooltip-content'></span>
+           inside each highlight span.
+           We hide these completely — they remain in DOM safely
+           but have no visible effect.
+           CSS ::before handles display now.
+        ─────────────────────────────────────────────────────── */
+        .tooltip-content {
+            display: none !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def get_tooltip_css(theme_config):
+    """DEPRECATED — use inject_tooltip_system() instead."""
+    return ""

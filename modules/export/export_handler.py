@@ -61,18 +61,26 @@ def handle_docx_export(pdf_text, difficult_words, highlight_enabled,
             )
             st.sidebar.success("✅ DOCX ready!")
 
-            # Only show OpenDyslexic message for English
-            if lang == "en":
-                st.sidebar.info(
+            # Language-aware font install hint
+            font_hints = {
+                "en": (
                     "💡 For best results, install OpenDyslexic font. "
                     "[Download here](https://opendyslexic.org/)"
-                )
-            elif lang == "hi":
-                st.sidebar.info(
+                ),
+                "hi": (
                     "💡 DOCX uses Noto Sans Devanagari font. "
                     "Install it for best display. "
                     "[Download here](https://fonts.google.com/noto/specimen/Noto+Sans+Devanagari)"
-                )
+                ),
+                "ta": (
+                    "💡 DOCX uses Noto Sans Tamil font. "
+                    "Install it for best display. "
+                    "[Download here](https://fonts.google.com/noto/specimen/Noto+Sans+Tamil)"
+                ),
+            }
+            hint = font_hints.get(lang)
+            if hint:
+                st.sidebar.info(hint)
 
             os.remove(fp)
         except Exception as e:

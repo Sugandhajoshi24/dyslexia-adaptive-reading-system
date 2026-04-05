@@ -5,6 +5,7 @@ Dyslexia Adaptive Reading System — Multilingual
 import streamlit as st
 import streamlit.components.v1 as components
 import os
+import hashlib
 
 from modules.config.themes import get_theme_config
 from modules.config.constants import SUPPORTED_FILE_TYPES, MIN_SENTENCE_LENGTH
@@ -20,7 +21,6 @@ from modules.ui.ui_styles import load_ui_styles
 from modules.ui.guided_reader import render_speech_sync
 from modules.ui.focus_reader import render_focus_mode
 from modules.ui.document_stats import render_document_stats
-from modules.ui.word_tooltip import get_tooltip_css
 
 from modules.document_processing.file_handler import extract_text_from_upload
 from modules.text_processing.language_detector import detect_language
@@ -90,7 +90,7 @@ else:
 
     sample_lang = st.radio(
         "📝 Try a sample text:",
-        ["None", "English Sample", "Hindi Sample (हिंदी)"],
+        ["None", "English Sample", "Hindi Sample (हिंदी)", "Tamil Sample (தமிழ்)"],
         index=0,
         horizontal=True
     )
@@ -102,6 +102,10 @@ else:
     elif sample_lang.startswith("Hindi"):
         detected_lang = "hi"
         lang_config = get_language_config("hi")
+        original_text = lang_config["sample_text"]
+    elif sample_lang.startswith("Tamil"):
+        detected_lang = "ta"
+        lang_config = get_language_config("ta")
         original_text = lang_config["sample_text"]
 
 # ── Load fonts + Sidebar ─────────────────────────────────
@@ -139,9 +143,102 @@ if settings["reading_mode"] != "🔊 Guided Reading":
         </script>
     """, height=0)
 
-# ── Word Tooltip (English only) ──────────────────────────
-if detected_lang == "en":
-    st.markdown(get_tooltip_css(theme), unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════
+# AUDIO CACHE HELPERS
+# ══════════════════════════════════════════════════════════
+
+def _stable_text_hash(text):
+    """
+    Deterministic hash of the first 500 chars of text.
+
+    Uses hashlib.md5 — NOT Python's built-in hash().
+    Python's hash() is randomized per-session (since Python 3.3)
+    and will produce different values across restarts.
+    hashlib.md5 always produces the same output for the same input.
+    """
+    if not text:
+        return "empty"
+    return hashlib.md5(
+        text[:500].encode("utf-8", errors="ignore")
+    ).hexdigest()[:16]
+
+
+def _get_focus_cache_key(lang, text):
+    """
+    Cache key for focus mode audio.
+    Format: focus_audio_<lang>_<text_hash>
+
+    Scoped to ONE language + ONE text version.
+    Prevents cross-language contamination.
+    """
+    return "focus_audio_" + lang + "_" + _stable_text_hash(text)
+
+
+def _get_guided_cache_key(lang, text):
+    """
+    Cache key for guided reading audio.
+    Format: guided_audio_<lang>_<text_hash>
+
+    Must match the key format used in guided_reader.py exactly.
+    """
+    return "guided_audio_" + lang + "_" + _stable_text_hash(text)
+
+
+def _purge_stale_audio_cache(current_lang, current_text):
+    """
+    Remove all focus and guided audio cache entries that do NOT
+    belong to the current language + text combination.
+
+    Only removes keys that start with:
+      - focus_audio_
+      - guided_audio_
+
+    Does NOT touch any other session_state keys.
+    Does NOT clear session_state entirely.
+    """
+    current_focus_key = _get_focus_cache_key(current_lang, current_text)
+    current_guided_key = _get_guided_cache_key(current_lang, current_text)
+
+    keys_to_delete = [
+        key for key in list(st.session_state.keys())
+        if (
+            key.startswith("focus_audio_") and key != current_focus_key
+        ) or (
+            key.startswith("guided_audio_") and key != current_guided_key
+        )
+    ]
+
+    for key in keys_to_delete:
+        del st.session_state[key]
+
+
+def _reset_state_on_text_change(new_lang, text):
+    """
+    Detect language or text changes and reset reading state.
+
+    On change:
+      1. Reset focus_idx to 0
+      2. Purge all stale audio cache entries
+      3. Update tracking keys in session_state
+
+    Tracking uses stable hashes — not Python hash().
+    """
+    prev_lang = st.session_state.get("active_language", None)
+    prev_text_hash = st.session_state.get("active_text_hash", None)
+    new_text_hash = _stable_text_hash(text)
+
+    if prev_lang != new_lang or prev_text_hash != new_text_hash:
+        # Reset navigation
+        st.session_state.focus_idx = 0
+
+        # Purge stale audio — only audio keys, nothing else
+        _purge_stale_audio_cache(new_lang, text)
+
+        # Update trackers
+        st.session_state.active_language = new_lang
+        st.session_state.active_text_hash = new_text_hash
+
 
 # ── Main Processing ──────────────────────────────────────
 if original_text and detected_lang:
@@ -149,11 +246,19 @@ if original_text and detected_lang:
     lang = detected_lang
     lang_config = get_language_config(lang)
 
+    # Detect language/text change — reset state + purge stale audio
+    _reset_state_on_text_change(lang, original_text)
+
     result = process_text(original_text, settings)
 
-    # ── Document Analysis (pass lang) ─────────────────
+    # ── Word Tooltip (English only, Normal reading mode only) ──
+    if lang == "en" and settings["reading_mode"] == "📖 Normal Reading":
+        from modules.ui.word_tooltip import inject_tooltip_system
+        inject_tooltip_system(theme)
+
+    # ── Document Analysis ─────────────────────────────
     analysis = analyze_document(original_text, result["difficult_words"], lang=lang)
-    render_document_stats(analysis, theme)
+    render_document_stats(analysis, theme, lang=lang)
 
     # ── 🔊 GUIDED READING ────────────────────────────
     if settings["reading_mode"] == "🔊 Guided Reading":
@@ -169,7 +274,8 @@ if original_text and detected_lang:
             line_spacing=settings["line_spacing"],
             letter_spacing=settings["letter_spacing"],
             theme_config=theme,
-            speech_lang=lang_config["speech_lang"]
+            speech_lang=lang_config["speech_lang"],
+            lang_code=lang
         )
 
     # ── 🔍 FOCUS MODE ────────────────────────────────
@@ -190,24 +296,35 @@ if original_text and detected_lang:
 
         if "focus_idx" not in st.session_state:
             st.session_state.focus_idx = 0
-        if "focus_audio" not in st.session_state:
-            st.session_state.focus_audio = {}
+
+        # Scoped cache key: language + stable text hash
+        audio_cache_key = _get_focus_cache_key(lang, original_text)
+
+        if audio_cache_key not in st.session_state:
+            st.session_state[audio_cache_key] = {}
+
+        focus_audio = st.session_state[audio_cache_key]
 
         st.session_state.focus_idx = max(
             0, min(st.session_state.focus_idx, total - 1)
         )
         idx = st.session_state.focus_idx
 
-        if total > 0 and idx not in st.session_state.focus_audio:
+        # Generate audio for current sentence if not cached
+        if total > 0 and idx not in focus_audio:
             with st.spinner("🎵 Preparing audio for sentence " + str(idx + 1) + "..."):
                 af = generate_audio(
                     sentences_tts[idx],
                     lang=lang_config["tts_code"]
                 )
                 if af and os.path.exists(af):
-                    with open(af, "rb") as f:
-                        st.session_state.focus_audio[idx] = f.read()
-                    os.remove(af)
+                    try:
+                        with open(af, "rb") as f:
+                            focus_audio[idx] = f.read()
+                    finally:
+                        # Always delete temp file even if read fails
+                        if os.path.exists(af):
+                            os.remove(af)
 
         if total > 0:
             render_focus_mode(
@@ -220,7 +337,7 @@ if original_text and detected_lang:
                 font_size=settings["font_size"],
                 line_spacing=settings["line_spacing"],
                 letter_spacing=settings["letter_spacing"],
-                audio_cache=st.session_state.focus_audio
+                audio_cache=focus_audio
             )
         else:
             st.warning("No sentences found in the text.")

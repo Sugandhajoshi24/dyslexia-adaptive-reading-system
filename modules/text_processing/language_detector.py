@@ -8,13 +8,11 @@ import re
 def detect_language(text):
     """
     Detect language from text based on character scripts.
-
-    Returns language code: 'en', 'hi', 'ta', etc.
+    Returns language code: 'en', 'hi', 'ta'
     """
     if not text or len(text.strip()) < 10:
         return "en"
 
-    # Count characters in each script
     devanagari_count = len(re.findall(r'[\u0900-\u097F]', text))
     tamil_count = len(re.findall(r'[\u0B80-\u0BFF]', text))
     latin_count = len(re.findall(r'[a-zA-Z]', text))
@@ -24,7 +22,6 @@ def detect_language(text):
     if total == 0:
         return "en"
 
-    # Whichever script has the most characters wins
     if devanagari_count > latin_count and devanagari_count > tamil_count:
         return "hi"
     elif tamil_count > latin_count and tamil_count > devanagari_count:
